@@ -4,54 +4,53 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
 
-# Install system dependencies
+# Install system dependencies and Firefox
 RUN apt-get update && apt-get install -y \
-    wget \
-    curl \
     python3 \
     python3-pip \
     python3-venv \
-    x11vnc \
+    firefox \
     xvfb \
-    xfce4 \
-    xfce4-goodies \
-    firefox-esr \
-    novnc \
-    websockify \
-    supervisor \
+    wget \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create working directory
+# Install ChromeDriver for Selenium
+RUN wget -q "https://github.com/mozilla/geckodriver/releases/download/v0.34.0/geckodriver-v0.34.0-linux64.tar.gz" \
+    && tar -xzf geckodriver-v0.34.0-linux64.tar.gz -C /usr/local/bin/ \
+    && chmod +x /usr/local/bin/geckodriver \
+    && rm geckodriver-v0.34.0-linux64.tar.gz
+
+# Create app directory
 WORKDIR /app
 
-# Copy application files
-COPY . .
+# Copy requirements first for better caching
+COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip3 install -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Create directories
-RUN mkdir -p /tmp/.X11-unix /tmp/.ICE-unix
+# Copy application code
+COPY . .
 
-# Set permissions
-RUN chmod 1777 /tmp/.X11-unix /tmp/.ICE-unix
+# Create necessary directories
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
 # Create startup script
 RUN echo '#!/bin/bash\n\
 echo "Starting services..."\n\
+# Start virtual display\n\
 Xvfb :99 -screen 0 1024x768x24 -ac &\n\
 sleep 2\n\
 export DISPLAY=:99\n\
-x11vnc -display :99 -forever -shared -noxdamage -passwd firefox123 -bg -nopw -quiet &\n\
-websockify --web /usr/share/novnc/ 6080 localhost:5900 &\n\
-sleep 2\n\
-firefox --display=:99 &\n\
-sleep 2\n\
-gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120\n\
+echo "Firefox is installed at: $(which firefox)"\n\
+echo "Starting Flask application..."\n\
+# Start Flask app\n\
+gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
-# Expose ports
-EXPOSE $PORT 6080
+# Expose port
+EXPOSE $PORT
 
-# Start services
+# Start application
 CMD ["/app/start.sh"]
