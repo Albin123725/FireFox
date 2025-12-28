@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Firefox 24/7 on Render with Uptime Robot
-Complete single file solution
+Complete single file solution - FIXED VERSION
 """
 
 import os
@@ -11,7 +11,7 @@ import threading
 import time
 import signal
 import logging
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, url_for
 from datetime import datetime
 
 # Configure logging
@@ -116,6 +116,17 @@ HTML_TEMPLATE = '''
             padding: 2px 6px;
             border-radius: 4px;
             font-family: monospace;
+            display: block;
+            margin: 5px 0;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .url-box {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
         }
     </style>
 </head>
@@ -130,6 +141,7 @@ HTML_TEMPLATE = '''
             </h3>
             {% if browser_running %}
                 <p>✅ Firefox is running in headless mode</p>
+                <p>PID: {{ pid if pid else 'N/A' }}</p>
             {% else %}
                 <p>❌ Firefox is not running</p>
             {% endif %}
@@ -146,7 +158,7 @@ HTML_TEMPLATE = '''
             </div>
             <div class="info-box">
                 <h4>Memory Usage</h4>
-                <p>{{ memory_usage }} MB</p>
+                <p>{{ memory_usage }}</p>
             </div>
         </div>
         
@@ -168,15 +180,34 @@ HTML_TEMPLATE = '''
         <div class="status-card">
             <h3>📡 Uptime Robot Configuration</h3>
             <p>Add this URL to Uptime Robot:</p>
-            <p><code>{{ uptime_robot_url }}</code></p>
+            <div class="url-box">
+                <code>{{ base_url }}/health</code>
+            </div>
             <p>Set monitoring interval to 5 minutes</p>
         </div>
         
         <div class="status-card">
             <h3>🔄 Auto-Restart URLs</h3>
             <p>Use these endpoints for automatic monitoring:</p>
-            <p><code>{{ url_for('health', _external=True) }}</code> - Health check</p>
-            <p><code>{{ url_for('ping', _external=True) }}</code> - Simple ping</p>
+            <div class="url-box">
+                <code>{{ base_url }}/health</code> - Health check (returns JSON)
+            </div>
+            <div class="url-box">
+                <code>{{ base_url }}/ping</code> - Simple ping endpoint
+            </div>
+            <div class="url-box">
+                <code>{{ base_url }}</code> - Dashboard (this page)
+            </div>
+        </div>
+        
+        <div class="status-card">
+            <h3>⚙️ API Endpoints</h3>
+            <div class="url-box">
+                <code>{{ base_url }}/status</code> - Get browser status (JSON)
+            </div>
+            <div class="url-box">
+                <code>{{ base_url }}/simulate-activity</code> - Simulate browsing activity
+            </div>
         </div>
     </div>
     
@@ -190,17 +221,43 @@ HTML_TEMPLATE = '''
         }
         // Simulate activity every 2 minutes
         setInterval(simulateActivity, 120000);
+        
+        // Copy URL functionality
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('URL copied to clipboard!');
+            });
+        }
+        
+        // Add copy buttons to all code blocks
+        document.querySelectorAll('code').forEach(code => {
+            const button = document.createElement('button');
+            button.textContent = 'Copy';
+            button.style.cssText = 'margin-left: 10px; padding: 2px 8px; font-size: 0.8em;';
+            button.onclick = () => copyToClipboard(code.textContent);
+            code.parentNode.insertBefore(button, code.nextSibling);
+        });
     </script>
 </body>
 </html>
 '''
 
 def get_memory_usage():
-    """Get current memory usage in MB"""
+    """Get current memory usage"""
     try:
         import psutil
         process = psutil.Process(os.getpid())
-        return round(process.memory_info().rss / 1024 / 1024, 2)
+        mem_mb = round(process.memory_info().rss / 1024 / 1024, 2)
+        return f"{mem_mb} MB"
+    except ImportError:
+        try:
+            # Try using psutil if installed
+            import psutil
+            process = psutil.Process(os.getpid())
+            mem_mb = round(process.memory_info().rss / 1024 / 1024, 2)
+            return f"{mem_mb} MB"
+        except:
+            return "N/A"
     except:
         return "N/A"
 
@@ -227,31 +284,31 @@ def start_firefox():
     global browser_process, browser_running, start_time
     
     try:
-        # Update system packages and install Firefox
-        logging.info("Setting up Firefox...")
-        
-        # Install Firefox if not present (Render has it)
-        try:
-            subprocess.run(['apt-get', 'update'], 
-                          stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
-            subprocess.run(['apt-get', 'install', '-y', 'firefox-esr', 'xvfb'],
-                          stdout=subprocess.DEVNULL,
-                          stderr=subprocess.DEVNULL)
-        except:
-            pass  # Firefox might already be installed
-        
-        # Start Firefox with Xvfb for headless display
         logging.info("Starting Firefox in headless mode...")
         
-        # Command to run Firefox
+        # Check if Firefox is installed
+        try:
+            subprocess.run(['which', 'firefox'], check=True, capture_output=True)
+        except:
+            logging.warning("Firefox not found, attempting to install...")
+            try:
+                subprocess.run(['apt-get', 'update'], 
+                             stdout=subprocess.DEVNULL, 
+                             stderr=subprocess.DEVNULL)
+                subprocess.run(['apt-get', 'install', '-y', 'firefox-esr'],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+            except:
+                logging.error("Failed to install Firefox")
+                return False
+        
+        # Start Firefox with optimized settings
         firefox_cmd = [
             'firefox',
             '--headless',
             '--no-sandbox',
             '--disable-gpu',
             '--disable-dev-shm-usage',
-            '--window-size=1920,1080',
             '--remote-debugging-port=9222',
             'about:blank'
         ]
@@ -261,7 +318,9 @@ def start_firefox():
             firefox_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            bufsize=1,
+            universal_newlines=True
         )
         
         browser_running = True
@@ -271,6 +330,10 @@ def start_firefox():
         # Start monitoring thread
         monitor_thread = threading.Thread(target=monitor_browser, daemon=True)
         monitor_thread.start()
+        
+        # Start activity simulation thread
+        activity_thread = threading.Thread(target=auto_simulate_activity, daemon=True)
+        activity_thread.start()
         
         return True
         
@@ -287,17 +350,17 @@ def monitor_browser():
         try:
             # Check if process is still alive
             if browser_process.poll() is not None:
-                logging.warning("Firefox process died. Restarting...")
+                logging.warning("Firefox process died. Attempting to restart...")
                 stop_firefox()
-                time.sleep(2)
+                time.sleep(5)
                 start_firefox()
                 break
             
-            # Log browser output occasionally
+            # Read output
             try:
-                output = browser_process.stdout.readline()
-                if output:
-                    logging.debug(f"Firefox: {output.strip()}")
+                for line in iter(browser_process.stdout.readline, ''):
+                    if line:
+                        logging.debug(f"Firefox: {line.strip()}")
             except:
                 pass
             
@@ -307,6 +370,16 @@ def monitor_browser():
             logging.error(f"Monitor error: {e}")
             time.sleep(30)
 
+def auto_simulate_activity():
+    """Automatically simulate browser activity"""
+    while browser_running:
+        try:
+            time.sleep(300)  # Every 5 minutes
+            if browser_running:
+                simulate_browser_activity()
+        except:
+            pass
+
 def stop_firefox():
     """Stop Firefox browser"""
     global browser_process, browser_running
@@ -314,44 +387,29 @@ def stop_firefox():
     if browser_process:
         try:
             browser_process.terminate()
-            browser_process.wait(timeout=5)
-            logging.info("Firefox stopped gracefully")
-        except:
             try:
+                browser_process.wait(timeout=5)
+                logging.info("Firefox stopped gracefully")
+            except subprocess.TimeoutExpired:
                 browser_process.kill()
+                browser_process.wait()
                 logging.warning("Firefox killed forcibly")
-            except:
-                pass
+        except Exception as e:
+            logging.error(f"Error stopping Firefox: {e}")
         
         browser_process = None
     
     browser_running = False
 
 def simulate_browser_activity():
-    """Simulate browser activity by visiting pages"""
+    """Simulate browser activity"""
     global page_views
     
     try:
-        import requests
-        import random
-        
-        # List of websites to visit
-        websites = [
-            'https://www.google.com',
-            'https://www.github.com',
-            'https://www.wikipedia.org',
-            'https://www.reddit.com',
-            'https://news.ycombinator.com'
-        ]
-        
-        # Visit a random website
-        url = random.choice(websites)
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            page_views += 1
-            logging.info(f"Visited {url} successfully. Total views: {page_views}")
-            return True
+        # Just increment page views for simulation
+        page_views += 1
+        logging.info(f"Simulated browser activity. Total views: {page_views}")
+        return True
         
     except Exception as e:
         logging.error(f"Activity simulation failed: {e}")
@@ -362,13 +420,15 @@ def simulate_browser_activity():
 @app.route('/')
 def index():
     """Main dashboard"""
+    base_url = request.url_root.rstrip('/')
     return render_template_string(
         HTML_TEMPLATE,
         browser_running=browser_running,
         uptime=get_uptime(),
         page_views=page_views,
         memory_usage=get_memory_usage(),
-        uptime_robot_url=url_for('health', _external=True)
+        base_url=base_url,
+        pid=browser_process.pid if browser_process else None
     )
 
 @app.route('/health')
@@ -379,6 +439,7 @@ def health():
             'status': 'healthy',
             'browser': 'running',
             'uptime': get_uptime(),
+            'page_views': page_views,
             'timestamp': datetime.now().isoformat()
         }), 200
     else:
@@ -394,7 +455,7 @@ def ping():
     return jsonify({'status': 'pong', 'timestamp': datetime.now().isoformat()}), 200
 
 @app.route('/start-browser')
-def start_browser():
+def start_browser_route():
     """Start the browser"""
     if not browser_running:
         success = start_firefox()
@@ -405,13 +466,13 @@ def start_browser():
     return jsonify({'success': True, 'message': 'Browser already running'})
 
 @app.route('/stop-browser')
-def stop_browser():
+def stop_browser_route():
     """Stop the browser"""
     stop_firefox()
     return jsonify({'success': True, 'message': 'Browser stopped'})
 
 @app.route('/restart-browser')
-def restart_browser():
+def restart_browser_route():
     """Restart the browser"""
     stop_firefox()
     time.sleep(2)
@@ -423,11 +484,12 @@ def restart_browser():
 
 @app.route('/visit-google')
 def visit_google():
-    """Visit Google in the browser"""
+    """Simulate visiting Google"""
     success = simulate_browser_activity()
     return jsonify({
         'success': success,
-        'message': 'Visited Google' if success else 'Failed to visit'
+        'message': 'Simulated browser activity' if success else 'Failed to simulate activity',
+        'page_views': page_views
     })
 
 @app.route('/simulate-activity')
@@ -444,7 +506,8 @@ def status():
         'uptime': get_uptime(),
         'page_views': page_views,
         'memory_usage': get_memory_usage(),
-        'pid': browser_process.pid if browser_process else None
+        'pid': browser_process.pid if browser_process else None,
+        'timestamp': datetime.now().isoformat()
     })
 
 def cleanup(signum, frame):
@@ -458,11 +521,17 @@ if __name__ == '__main__':
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
     
-    # Start Firefox on startup
-    logging.info("Starting Firefox 24/7 service...")
-    start_firefox()
-    
     # Start Flask app
     port = int(os.environ.get('PORT', 5000))
-    logging.info(f"Starting web server on port {port}")
+    logging.info(f"Starting Firefox 24/7 service on port {port}")
+    
+    # Start Firefox in background thread
+    def start_firefox_delayed():
+        time.sleep(3)  # Wait for Flask to start
+        start_firefox()
+    
+    firefox_thread = threading.Thread(target=start_firefox_delayed, daemon=True)
+    firefox_thread.start()
+    
+    # Run Flask app
     app.run(host='0.0.0.0', port=port, debug=False)
