@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Firefox 24/7 on Render with Uptime Robot
-Complete single file solution - FIXED VERSION
+Real Firefox Browser 24/7 with VNC Web Access
+Access via: https://your-app.onrender.com/vnc.html
 """
 
 import os
@@ -11,8 +11,8 @@ import threading
 import time
 import signal
 import logging
-from flask import Flask, jsonify, render_template_string, request
-from datetime import datetime
+import socket
+from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
 # Configure logging
 logging.basicConfig(
@@ -26,21 +26,23 @@ logging.basicConfig(
 app = Flask(__name__)
 
 # Global variables
-browser_process = None
-browser_running = False
+vnc_process = None
+firefox_process = None
+xvfb_process = None
+service_running = False
 start_time = None
-page_views = 0
+connections = 0
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Firefox 24/7 on Render</title>
+    <title>🦊 Real Firefox Browser 24/7</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -59,148 +61,137 @@ HTML_TEMPLATE = '''
             text-align: center;
             margin-bottom: 30px;
             color: white;
-            font-size: 2.5em;
+            font-size: 2.8em;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
         }
+        .hero {
+            text-align: center;
+            padding: 40px 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            margin-bottom: 30px;
+        }
+        .hero h2 {
+            font-size: 2em;
+            margin-bottom: 20px;
+        }
+        .access-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 15px;
+            text-decoration: none;
+            font-size: 1.3em;
+            font-weight: bold;
+            margin: 20px 0;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s;
+        }
+        .access-button:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            background: linear-gradient(135deg, #45a049 0%, #4CAF50 100%);
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
         .status-card {
-            background: rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.1);
             border-radius: 15px;
             padding: 25px;
-            margin: 20px 0;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        .status-indicator {
-            display: inline-block;
-            width: 15px;
-            height: 15px;
-            border-radius: 50%;
-            margin-right: 12px;
-            vertical-align: middle;
-        }
-        .online { 
-            background-color: #4CAF50; 
-            box-shadow: 0 0 15px #4CAF50;
-            animation: pulse 2s infinite;
-        }
-        .offline { 
-            background-color: #f44336;
-            box-shadow: 0 0 10px #f44336;
-        }
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.7; }
-            100% { opacity: 1; }
-        }
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 20px;
-            margin: 25px 0;
-        }
-        .info-box {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 20px;
-            border-radius: 12px;
             text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
             transition: transform 0.3s;
-            border: 1px solid rgba(255, 255, 255, 0.05);
         }
-        .info-box:hover {
+        .status-card:hover {
             transform: translateY(-5px);
             background: rgba(255, 255, 255, 0.15);
         }
-        .info-box h4 {
-            margin-top: 0;
-            color: #ddd;
-            font-size: 1em;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+        .status-icon {
+            font-size: 2.5em;
+            margin-bottom: 15px;
         }
-        .info-box p {
+        .status-title {
+            font-size: 1.1em;
+            color: #ddd;
+            margin-bottom: 10px;
+        }
+        .status-value {
             font-size: 1.8em;
             font-weight: bold;
-            margin: 10px 0 0 0;
         }
         .controls {
             display: flex;
-            gap: 12px;
+            gap: 15px;
             justify-content: center;
             margin: 30px 0;
             flex-wrap: wrap;
         }
-        button {
+        .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border: none;
             color: white;
-            padding: 14px 28px;
+            padding: 15px 30px;
             border-radius: 10px;
             cursor: pointer;
-            transition: all 0.3s;
             font-size: 1em;
             font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s;
         }
-        button:hover {
+        .btn:hover {
             transform: translateY(-3px);
             box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
         }
-        button:active {
-            transform: translateY(-1px);
+        .instructions {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 15px;
+            padding: 25px;
+            margin: 30px 0;
+            border-left: 5px solid #667eea;
         }
-        .url-box {
-            background: rgba(0, 0, 0, 0.25);
-            padding: 15px;
-            border-radius: 10px;
-            margin: 12px 0;
-            border-left: 4px solid #667eea;
-        }
-        code {
-            background: rgba(0, 0, 0, 0.3);
-            padding: 10px 15px;
-            border-radius: 8px;
-            font-family: 'Consolas', 'Monaco', monospace;
-            display: block;
-            margin: 8px 0;
-            overflow-x: auto;
-            white-space: nowrap;
-            font-size: 0.9em;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        .copy-btn {
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            color: white;
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.8em;
-            margin-left: 10px;
-            transition: background 0.3s;
-        }
-        .copy-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-        .section-title {
+        .instructions h3 {
+            color: #fff;
+            margin-top: 0;
             display: flex;
             align-items: center;
             gap: 10px;
-            margin-top: 30px;
-            margin-bottom: 15px;
-            font-size: 1.3em;
         }
-        .emoji {
+        .url-box {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-family: monospace;
+            word-break: break-all;
+        }
+        .alert {
+            background: rgba(255, 193, 7, 0.15);
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .alert-icon {
             font-size: 1.5em;
         }
-        .instructions {
-            background: rgba(255, 255, 255, 0.05);
-            padding: 20px;
+        .vnc-container {
+            width: 100%;
+            height: 600px;
+            background: #000;
             border-radius: 10px;
+            overflow: hidden;
             margin: 20px 0;
-            font-size: 0.95em;
-            line-height: 1.6;
         }
         .footer {
             text-align: center;
@@ -210,157 +201,147 @@ HTML_TEMPLATE = '''
             color: rgba(255, 255, 255, 0.7);
             font-size: 0.9em;
         }
-        .alert {
-            background: rgba(255, 193, 7, 0.15);
-            border: 1px solid rgba(255, 193, 7, 0.3);
+        .connection-info {
+            background: rgba(76, 175, 80, 0.15);
+            border: 1px solid rgba(76, 175, 80, 0.3);
             border-radius: 10px;
-            padding: 15px;
-            margin: 15px 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
+            padding: 20px;
+            margin: 20px 0;
         }
-        .alert::before {
-            content: "⚠️";
-            font-size: 1.2em;
+        .password-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-family: monospace;
         }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
     <div class="container">
-        <h1><i class="fas fa-firefox-browser"></i> Firefox Browser 24/7</h1>
+        <h1><i class="fab fa-firefox-browser"></i> Real Firefox Browser 24/7</h1>
         
-        <div class="status-card">
-            <h3>
-                <span class="status-indicator {{ 'online' if browser_running else 'offline' }}"></span>
-                Browser Status: <strong>{{ 'RUNNING' if browser_running else 'STOPPED' }}</strong>
-            </h3>
-            {% if browser_running %}
-                <p><i class="fas fa-check-circle"></i> Firefox is running in headless mode</p>
-                <p><i class="fas fa-microchip"></i> Process ID: {{ pid if pid else 'N/A' }}</p>
+        <div class="hero">
+            <h2>Access Your Personal Firefox Browser Anywhere</h2>
+            <p>Full graphical browser with VNC remote access. Use it like a regular desktop browser!</p>
+            
+            {% if service_running %}
+            <a href="/vnc.html" class="access-button" target="_blank">
+                <i class="fas fa-desktop"></i> Launch Firefox Browser Now
+            </a>
             {% else %}
-                <p><i class="fas fa-times-circle"></i> Firefox is not running. Click "Start Browser" to begin.</p>
+            <button class="access-button" onclick="startService()">
+                <i class="fas fa-play-circle"></i> Start Browser Service
+            </button>
             {% endif %}
         </div>
         
-        <div class="info-grid">
-            <div class="info-box">
-                <h4><i class="far fa-clock"></i> Uptime</h4>
-                <p>{{ uptime }}</p>
+        <div class="connection-info">
+            <h3><i class="fas fa-info-circle"></i> Connection Information</h3>
+            <p><strong>VNC Password:</strong> <span class="password-box">firefox123</span></p>
+            <p><strong>Direct VNC URL:</strong> <span class="url-box">{{ base_url }}/vnc.html?password=firefox123</span></p>
+            <p><em>Bookmark this URL for quick access to your browser!</em></p>
+        </div>
+        
+        <div class="status-grid">
+            <div class="status-card">
+                <div class="status-icon"><i class="fas fa-satellite-dish"></i></div>
+                <div class="status-title">Service Status</div>
+                <div class="status-value">{{ 'RUNNING' if service_running else 'STOPPED' }}</div>
             </div>
-            <div class="info-box">
-                <h4><i class="far fa-eye"></i> Page Views</h4>
-                <p>{{ page_views }}</p>
+            <div class="status-card">
+                <div class="status-icon"><i class="far fa-clock"></i></div>
+                <div class="status-title">Uptime</div>
+                <div class="status-value">{{ uptime }}</div>
             </div>
-            <div class="info-box">
-                <h4><i class="fas fa-memory"></i> Memory Usage</h4>
-                <p>{{ memory_usage }}</p>
+            <div class="status-card">
+                <div class="status-icon"><i class="fas fa-users"></i></div>
+                <div class="status-title">Active Connections</div>
+                <div class="status-value">{{ connections }}</div>
             </div>
-            <div class="info-box">
-                <h4><i class="fas fa-heartbeat"></i> Health</h4>
-                <p>{{ 'Healthy' if browser_running else 'Stopped' }}</p>
+            <div class="status-card">
+                <div class="status-icon"><i class="fas fa-memory"></i></div>
+                <div class="status-title">Memory Usage</div>
+                <div class="status-value">{{ memory_usage }}</div>
             </div>
         </div>
         
         <div class="controls">
-            <button onclick="fetch('/start-browser').then(r => location.reload())">
-                <i class="fas fa-play"></i> Start Browser
+            <button class="btn" onclick="fetch('/start-service').then(r => location.reload())">
+                <i class="fas fa-play"></i> Start Service
             </button>
-            <button onclick="fetch('/stop-browser').then(r => location.reload())">
-                <i class="fas fa-stop"></i> Stop Browser
+            <button class="btn" onclick="fetch('/stop-service').then(r => location.reload())">
+                <i class="fas fa-stop"></i> Stop Service
             </button>
-            <button onclick="fetch('/restart-browser').then(r => location.reload())">
-                <i class="fas fa-redo"></i> Restart
+            <button class="btn" onclick="fetch('/restart-service').then(r => location.reload())">
+                <i class="fas fa-redo"></i> Restart Service
             </button>
-            <button onclick="fetch('/visit-google').then(r => location.reload())">
-                <i class="fas fa-globe"></i> Visit Site
+            <button class="btn" onclick="window.open('/vnc.html', '_blank')">
+                <i class="fas fa-external-link-alt"></i> Open VNC
             </button>
-            <button onclick="fetch('/simulate-activity').then(r => location.reload())">
-                <i class="fas fa-sync"></i> Simulate Activity
+            <button class="btn" onclick="fetch('/health').then(r => alert('Health check: ' + r.status))">
+                <i class="fas fa-heartbeat"></i> Health Check
             </button>
+        </div>
+        
+        <div class="instructions">
+            <h3><i class="fas fa-graduation-cap"></i> How to Use</h3>
+            <ol>
+                <li><strong>Click "Launch Firefox Browser Now"</strong> to open the VNC interface</li>
+                <li><strong>Enter password:</strong> <code>firefox123</code></li>
+                <li><strong>Double-click Firefox icon</strong> on the desktop to launch browser</li>
+                <li><strong>Bookmark</strong> the VNC URL for future access</li>
+                <li><strong>Use Uptime Robot</strong> with URL: <code>{{ base_url }}/health</code> to keep service alive</li>
+            </ol>
         </div>
         
         <div class="alert">
-            <strong>Note:</strong> Free Render instances sleep after 15 minutes of inactivity. 
-            Use Uptime Robot to ping the health endpoint regularly.
+            <div class="alert-icon">⚠️</div>
+            <div>
+                <strong>Important:</strong> Free Render instances sleep after 15 minutes of inactivity. 
+                Use <a href="https://uptimerobot.com" target="_blank" style="color: #4CAF50;">Uptime Robot</a> to ping the health endpoint every 5 minutes.
+            </div>
         </div>
         
-        <div class="section-title">
-            <span class="emoji">📡</span>
-            <h3>Uptime Robot Configuration</h3>
-        </div>
         <div class="instructions">
-            <p>To keep your Firefox instance running 24/7, configure Uptime Robot with these settings:</p>
-            <div class="url-box">
-                <strong>Monitoring URL:</strong>
-                <code id="health-url">{{ base_url }}/health</code>
-                <button class="copy-btn" onclick="copyToClipboard('{{ base_url }}/health')">
-                    <i class="far fa-copy"></i> Copy
-                </button>
-            </div>
-            <p><strong>Recommended settings:</strong></p>
-            <ul>
-                <li>Monitor Type: HTTP(s)</li>
-                <li>Check Interval: 5 minutes</li>
-                <li>Alert Contacts: Add your email</li>
-            </ul>
-        </div>
-        
-        <div class="section-title">
-            <span class="emoji">🔧</span>
-            <h3>API Endpoints</h3>
-        </div>
-        <div class="info-grid">
-            <div class="url-box">
-                <strong>Health Check</strong>
-                <code>{{ base_url }}/health</code>
-                <button class="copy-btn" onclick="copyToClipboard('{{ base_url }}/health')">
-                    <i class="far fa-copy"></i> Copy
-                </button>
-            </div>
-            <div class="url-box">
-                <strong>Simple Ping</strong>
-                <code>{{ base_url }}/ping</code>
-                <button class="copy-btn" onclick="copyToClipboard('{{ base_url }}/ping')">
-                    <i class="far fa-copy"></i> Copy
-                </button>
-            </div>
-            <div class="url-box">
-                <strong>Status Info</strong>
-                <code>{{ base_url }}/status</code>
-                <button class="copy-btn" onclick="copyToClipboard('{{ base_url }}/status')">
-                    <i class="far fa-copy"></i> Copy
-                </button>
-            </div>
-        </div>
-        
-        <div class="section-title">
-            <span class="emoji">🚀</span>
-            <h3>Quick Actions</h3>
-        </div>
-        <div class="instructions">
-            <p>Use these direct links for quick actions:</p>
-            <div class="controls">
-                <a href="/start-browser" style="text-decoration: none;">
-                    <button><i class="fas fa-rocket"></i> Quick Start</button>
-                </a>
-                <a href="/status" style="text-decoration: none;" target="_blank">
-                    <button><i class="fas fa-info-circle"></i> JSON Status</button>
-                </a>
-                <a href="https://uptimerobot.com" style="text-decoration: none;" target="_blank">
-                    <button><i class="fas fa-external-link-alt"></i> Uptime Robot</button>
-                </a>
+            <h3><i class="fas fa-cogs"></i> Technical Details</h3>
+            <div class="status-grid">
+                <div class="status-card">
+                    <div class="status-title">VNC Server</div>
+                    <div class="status-value">TigerVNC</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-title">Web Interface</div>
+                    <div class="status-value">noVNC</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-title">Display</div>
+                    <div class="status-value">Xvfb 1024x768</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-title">Desktop</div>
+                    <div class="status-value">XFCE</div>
+                </div>
             </div>
         </div>
         
         <div class="footer">
-            <p><i class="fas fa-code"></i> Firefox 24/7 Service | Running on Render</p>
-            <p>Auto-refreshes every 30 seconds | Last refresh: <span id="current-time">{{ current_time }}</span></p>
+            <p><i class="fas fa-code"></i> Real Firefox Browser 24/7 | Powered by Render + VNC</p>
+            <p>Auto-refreshes every 30 seconds | Current time: <span id="current-time"></span></p>
         </div>
     </div>
     
     <script>
+        function startService() {
+            fetch('/start-service')
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    location.reload();
+                });
+        }
+        
         // Update current time
         function updateTime() {
             const now = new Date();
@@ -378,63 +359,28 @@ HTML_TEMPLATE = '''
         // Auto-refresh page every 30 seconds
         setTimeout(() => location.reload(), 30000);
         
-        // Copy to clipboard function
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => {
-                // Show temporary feedback
-                const originalText = event.target.innerHTML;
-                event.target.innerHTML = '<i class="fas fa-check"></i> Copied!';
-                event.target.style.background = '#4CAF50';
-                setTimeout(() => {
-                    event.target.innerHTML = originalText;
-                    event.target.style.background = '';
-                }, 2000);
-            }).catch(err => {
-                console.error('Failed to copy: ', err);
-                alert('Failed to copy to clipboard. Please copy manually.');
-            });
-        }
+        // Ping health endpoint every 2 minutes to keep service alive
+        setInterval(() => {
+            fetch('/ping').catch(() => console.log('Ping failed'));
+        }, 120000);
         
-        // Simulate activity every 2 minutes
-        function simulateActivity() {
-            fetch('/simulate-activity')
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Activity simulated:', data);
-                })
-                .catch(error => console.error('Error simulating activity:', error));
-        }
-        
-        // Start periodic activity simulation (every 2 minutes)
-        setInterval(simulateActivity, 120000);
-        
-        // Initial activity simulation
-        setTimeout(simulateActivity, 10000);
-        
-        // Add keyboard shortcuts
+        // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
-            // Ctrl+S to start browser
-            if (e.ctrlKey && e.key === 's') {
+            // Ctrl+Enter to start service
+            if (e.ctrlKey && e.key === 'Enter') {
                 e.preventDefault();
-                fetch('/start-browser').then(r => location.reload());
+                startService();
             }
-            // Ctrl+R to restart browser
-            if (e.ctrlKey && e.key === 'r') {
+            // Ctrl+V to open VNC
+            if (e.ctrlKey && e.key === 'v') {
                 e.preventDefault();
-                fetch('/restart-browser').then(r => location.reload());
-            }
-            // Ctrl+D to simulate activity
-            if (e.ctrlKey && e.key === 'd') {
-                e.preventDefault();
-                fetch('/simulate-activity').then(r => location.reload());
+                window.open('/vnc.html', '_blank');
             }
         });
         
-        // Show keyboard shortcuts help
         console.log('Keyboard shortcuts:');
-        console.log('Ctrl+S - Start browser');
-        console.log('Ctrl+R - Restart browser');
-        console.log('Ctrl+D - Simulate activity');
+        console.log('Ctrl+Enter - Start service');
+        console.log('Ctrl+V - Open VNC interface');
     </script>
 </body>
 </html>
@@ -443,7 +389,6 @@ HTML_TEMPLATE = '''
 def get_memory_usage():
     """Get current memory usage"""
     try:
-        # Simple memory usage calculation without psutil
         import resource
         usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         if hasattr(resource, 'getpagesize'):
@@ -464,125 +409,153 @@ def get_uptime():
     minutes, seconds = divmod(remainder, 60)
     
     if days > 0:
-        return f"{days}d {hours}h {minutes}m"
+        return f"{days}d {hours}h"
     elif hours > 0:
         return f"{hours}h {minutes}m"
     else:
         return f"{minutes}m {seconds}s"
 
-def start_firefox():
-    """Start Firefox browser in headless mode"""
-    global browser_process, browser_running, start_time
+def start_vnc_service():
+    """Start VNC server with Firefox desktop"""
+    global vnc_process, firefox_process, xvfb_process, service_running, start_time
     
     try:
-        logging.info("Starting Firefox in headless mode...")
+        logging.info("Starting VNC service with Firefox desktop...")
         
-        # Command to start Firefox
-        firefox_cmd = [
-            'firefox',
-            '--headless',
-            '--no-sandbox',
-            '--disable-gpu',
-            '--disable-dev-shm-usage',
-            '--width=1920',
-            '--height=1080',
-            '--remote-debugging-port=9222',
-            'about:blank'
+        # Create directories for VNC
+        os.makedirs("/tmp/.X11-unix", exist_ok=True)
+        os.makedirs("/tmp/.ICE-unix", exist_ok=True)
+        
+        # Install required packages first
+        logging.info("Installing required packages...")
+        packages = [
+            'x11vnc', 'xvfb', 'xfce4', 'xfce4-goodies',
+            'firefox-esr', 'novnc', 'websockify'
         ]
         
-        # Start the browser process
-        browser_process = subprocess.Popen(
-            firefox_cmd,
+        # Update and install packages
+        subprocess.run(['apt-get', 'update'], 
+                      stdout=subprocess.DEVNULL, 
+                      stderr=subprocess.DEVNULL)
+        
+        for pkg in packages:
+            try:
+                subprocess.run(['apt-get', 'install', '-y', pkg],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+                logging.info(f"Installed: {pkg}")
+            except:
+                logging.warning(f"Failed to install {pkg}")
+        
+        # Start Xvfb (virtual display)
+        logging.info("Starting Xvfb...")
+        xvfb_cmd = ['Xvfb', ':99', '-screen', '0', '1024x768x24', '-ac']
+        xvfb_process = subprocess.Popen(
+            xvfb_cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            universal_newlines=True
+            stderr=subprocess.PIPE
         )
         
-        browser_running = True
+        # Set DISPLAY environment variable
+        os.environ['DISPLAY'] = ':99'
+        
+        # Start x11vnc server
+        logging.info("Starting x11vnc server...")
+        vnc_cmd = [
+            'x11vnc',
+            '-display', ':99',
+            '-forever',
+            '-shared',
+            '-noxdamage',
+            '-passwd', 'firefox123',
+            '-bg',
+            '-nopw',  # Also allow no password for easier access
+            '-quiet'
+        ]
+        
+        vnc_process = subprocess.Popen(
+            vnc_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        # Start noVNC websocket proxy
+        logging.info("Starting noVNC websocket proxy...")
+        novnc_cmd = [
+            'websockify',
+            '--web', '/usr/share/novnc/',
+            '6080',
+            'localhost:5900'
+        ]
+        
+        # Start in background
+        subprocess.Popen(
+            novnc_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        
+        # Start Firefox after a delay
+        def start_firefox_delayed():
+            time.sleep(5)
+            try:
+                # Start Firefox maximized
+                firefox_cmd = ['firefox', '--display=:99']
+                firefox_process = subprocess.Popen(
+                    firefox_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                logging.info("Firefox started on display :99")
+            except Exception as e:
+                logging.error(f"Failed to start Firefox: {e}")
+        
+        firefox_thread = threading.Thread(target=start_firefox_delayed, daemon=True)
+        firefox_thread.start()
+        
+        service_running = True
         start_time = time.time()
-        logging.info(f"Firefox started successfully. PID: {browser_process.pid}")
-        
-        # Start monitoring thread
-        monitor_thread = threading.Thread(target=monitor_browser, daemon=True)
-        monitor_thread.start()
-        
-        # Start activity simulation thread
-        activity_thread = threading.Thread(target=auto_simulate_activity, daemon=True)
-        activity_thread.start()
+        logging.info("VNC service started successfully!")
+        logging.info(f"VNC Password: firefox123")
+        logging.info(f"Access URL: http://localhost:6080/vnc.html")
         
         return True
         
     except Exception as e:
-        logging.error(f"Failed to start Firefox: {e}")
-        browser_running = False
+        logging.error(f"Failed to start VNC service: {e}")
+        service_running = False
         return False
 
-def monitor_browser():
-    """Monitor browser process and restart if needed"""
-    global browser_process, browser_running
-    
-    while browser_running and browser_process:
-        try:
-            # Check if process is still alive
-            if browser_process.poll() is not None:
-                logging.warning("Firefox process died. Attempting to restart...")
-                stop_firefox()
-                time.sleep(5)
-                start_firefox()
-                break
-            
-            time.sleep(10)  # Check every 10 seconds
-            
-        except Exception as e:
-            logging.error(f"Monitor error: {e}")
-            time.sleep(30)
-
-def auto_simulate_activity():
-    """Automatically simulate browser activity"""
-    while browser_running:
-        try:
-            time.sleep(120)  # Every 2 minutes
-            if browser_running:
-                simulate_browser_activity()
-        except:
-            pass
-
-def stop_firefox():
-    """Stop Firefox browser"""
-    global browser_process, browser_running
-    
-    if browser_process:
-        try:
-            browser_process.terminate()
-            try:
-                browser_process.wait(timeout=5)
-                logging.info("Firefox stopped gracefully")
-            except subprocess.TimeoutExpired:
-                browser_process.kill()
-                browser_process.wait()
-                logging.warning("Firefox killed forcibly")
-        except Exception as e:
-            logging.error(f"Error stopping Firefox: {e}")
-        
-        browser_process = None
-    
-    browser_running = False
-
-def simulate_browser_activity():
-    """Simulate browser activity"""
-    global page_views
+def stop_vnc_service():
+    """Stop VNC service"""
+    global vnc_process, firefox_process, xvfb_process, service_running
     
     try:
-        page_views += 1
-        logging.info(f"Simulated browser activity. Total views: {page_views}")
+        # Stop all processes
+        processes = [vnc_process, firefox_process, xvfb_process]
+        
+        for proc in processes:
+            if proc:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                except:
+                    try:
+                        proc.kill()
+                    except:
+                        pass
+        
+        vnc_process = None
+        firefox_process = None
+        xvfb_process = None
+        service_running = False
+        
+        logging.info("VNC service stopped")
         return True
         
     except Exception as e:
-        logging.error(f"Activity simulation failed: {e}")
-    
-    return False
+        logging.error(f"Error stopping VNC service: {e}")
+        return False
 
 # Flask Routes
 @app.route('/')
@@ -591,101 +564,124 @@ def index():
     base_url = request.url_root.rstrip('/')
     return render_template_string(
         HTML_TEMPLATE,
-        browser_running=browser_running,
+        service_running=service_running,
         uptime=get_uptime(),
-        page_views=page_views,
+        connections=connections,
         memory_usage=get_memory_usage(),
-        base_url=base_url,
-        pid=browser_process.pid if browser_process else None,
-        current_time=datetime.now().strftime('%H:%M:%S')
+        base_url=base_url
     )
 
 @app.route('/health')
 def health():
     """Health check endpoint for Uptime Robot"""
-    if browser_running:
+    if service_running:
         return jsonify({
             'status': 'healthy',
-            'browser': 'running',
+            'service': 'running',
             'uptime': get_uptime(),
-            'page_views': page_views,
-            'timestamp': datetime.now().isoformat(),
-            'service': 'Firefox 24/7'
+            'vnc': 'available',
+            'url': f"{request.url_root.rstrip('/')}/vnc.html",
+            'timestamp': time.time()
         }), 200
     else:
         return jsonify({
-            'status': 'degraded',
-            'browser': 'stopped',
-            'timestamp': datetime.now().isoformat(),
-            'service': 'Firefox 24/7'
+            'status': 'starting',
+            'service': 'starting',
+            'timestamp': time.time()
         }), 200
 
 @app.route('/ping')
 def ping():
     """Simple ping endpoint"""
-    return jsonify({'status': 'pong', 'timestamp': datetime.now().isoformat()}), 200
+    return jsonify({'status': 'pong', 'timestamp': time.time()}), 200
 
-@app.route('/start-browser')
-def start_browser_route():
-    """Start the browser"""
-    if not browser_running:
-        success = start_firefox()
+@app.route('/start-service')
+def start_service():
+    """Start VNC service"""
+    if not service_running:
+        success = start_vnc_service()
         return jsonify({
             'success': success,
-            'message': 'Browser started' if success else 'Failed to start browser'
+            'message': 'VNC service started' if success else 'Failed to start service'
         })
-    return jsonify({'success': True, 'message': 'Browser already running'})
+    return jsonify({'success': True, 'message': 'Service already running'})
 
-@app.route('/stop-browser')
-def stop_browser_route():
-    """Stop the browser"""
-    stop_firefox()
-    return jsonify({'success': True, 'message': 'Browser stopped'})
+@app.route('/stop-service')
+def stop_service():
+    """Stop VNC service"""
+    stop_vnc_service()
+    return jsonify({'success': True, 'message': 'Service stopped'})
 
-@app.route('/restart-browser')
-def restart_browser_route():
-    """Restart the browser"""
-    stop_firefox()
+@app.route('/restart-service')
+def restart_service():
+    """Restart VNC service"""
+    stop_vnc_service()
     time.sleep(2)
-    success = start_firefox()
+    success = start_vnc_service()
     return jsonify({
         'success': success,
-        'message': 'Browser restarted' if success else 'Failed to restart'
+        'message': 'Service restarted' if success else 'Failed to restart'
     })
-
-@app.route('/visit-google')
-def visit_google():
-    """Simulate visiting Google"""
-    success = simulate_browser_activity()
-    return jsonify({
-        'success': success,
-        'message': 'Simulated browser activity' if success else 'Failed to simulate activity',
-        'page_views': page_views
-    })
-
-@app.route('/simulate-activity')
-def simulate_activity():
-    """Simulate browser activity"""
-    success = simulate_browser_activity()
-    return jsonify({'success': success, 'page_views': page_views})
 
 @app.route('/status')
 def status():
-    """Get current status"""
+    """Get service status"""
     return jsonify({
-        'browser_running': browser_running,
+        'service_running': service_running,
         'uptime': get_uptime(),
-        'page_views': page_views,
+        'vnc_port': 6080,
+        'firefox': 'ready',
         'memory_usage': get_memory_usage(),
-        'pid': browser_process.pid if browser_process else None,
-        'timestamp': datetime.now().isoformat(),
-        'service': 'Firefox 24/7 on Render'
+        'timestamp': time.time()
     })
+
+@app.route('/vnc.html')
+def vnc_page():
+    """Serve noVNC interface"""
+    try:
+        # Return noVNC interface
+        novnc_html = '''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Firefox Browser VNC</title>
+            <meta charset="utf-8">
+            <style>
+                body { margin: 0; padding: 0; background: #000; }
+                #noVNC_container { width: 100vw; height: 100vh; }
+            </style>
+            <script type="module">
+                import { RFB } from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.min.js';
+                
+                window.addEventListener('load', () => {
+                    const host = window.location.hostname;
+                    const port = 6080;
+                    const password = 'firefox123';
+                    const path = 'websockify';
+                    
+                    const rfb = new RFB(document.getElementById('noVNC_container'), 
+                                       `ws://${host}:${port}/${path}`);
+                    rfb.credentials = { password: password };
+                    rfb.scaleViewport = true;
+                    rfb.resizeSession = true;
+                    
+                    console.log('Connecting to VNC server...');
+                });
+            </script>
+        </head>
+        <body>
+            <div id="noVNC_container"></div>
+        </body>
+        </html>
+        '''
+        return novnc_html
+    except Exception as e:
+        return f"VNC interface error: {e}", 500
 
 def cleanup(signum, frame):
     """Cleanup on shutdown"""
     logging.info("Shutting down...")
-    stop_firefox()
+    stop_vnc_service()
     sys.exit(0)
 
 if __name__ == '__main__':
@@ -695,16 +691,16 @@ if __name__ == '__main__':
     
     # Start Flask app
     port = int(os.environ.get('PORT', 5000))
-    logging.info(f"Starting Firefox 24/7 service on port {port}")
+    logging.info(f"Starting Real Firefox Browser service on port {port}")
     
-    # Start Firefox in background thread after a delay
-    def start_firefox_delayed():
-        time.sleep(5)  # Wait for Flask to start
-        logging.info("Attempting to start Firefox...")
-        start_firefox()
+    # Start VNC service in background thread
+    def start_vnc_delayed():
+        time.sleep(5)
+        logging.info("Auto-starting VNC service...")
+        start_vnc_service()
     
-    firefox_thread = threading.Thread(target=start_firefox_delayed, daemon=True)
-    firefox_thread.start()
+    vnc_thread = threading.Thread(target=start_vnc_delayed, daemon=True)
+    vnc_thread.start()
     
     # Run Flask app
     app.run(host='0.0.0.0', port=port, debug=False)
