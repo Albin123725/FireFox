@@ -1,11 +1,10 @@
 services:
   - type: web
-    name: firefox-24-7
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120
+    name: real-firefox-browser
+    env: docker
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: PORT
         value: 10000
-    plan: free
+    plan: starter  # May need starter plan for VNC
     autoDeploy: true
