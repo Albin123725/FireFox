@@ -11,7 +11,7 @@ import threading
 import time
 import signal
 import logging
-from flask import Flask, jsonify, render_template_string, url_for
+from flask import Flask, jsonify, render_template_string, request
 from datetime import datetime
 
 # Configure logging
@@ -39,8 +39,8 @@ HTML_TEMPLATE = '''
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 1000px;
             margin: 0 auto;
             padding: 20px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -50,193 +50,391 @@ HTML_TEMPLATE = '''
         .container {
             background: rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
-            border-radius: 15px;
-            padding: 30px;
+            border-radius: 20px;
+            padding: 40px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
         h1 {
             text-align: center;
             margin-bottom: 30px;
             color: white;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
         }
         .status-card {
             background: rgba(255, 255, 255, 0.15);
-            border-radius: 10px;
-            padding: 20px;
-            margin: 15px 0;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
         .status-indicator {
             display: inline-block;
-            width: 12px;
-            height: 12px;
+            width: 15px;
+            height: 15px;
             border-radius: 50%;
-            margin-right: 10px;
+            margin-right: 12px;
+            vertical-align: middle;
         }
-        .online { background-color: #4CAF50; box-shadow: 0 0 10px #4CAF50; }
-        .offline { background-color: #f44336; }
+        .online { 
+            background-color: #4CAF50; 
+            box-shadow: 0 0 15px #4CAF50;
+            animation: pulse 2s infinite;
+        }
+        .offline { 
+            background-color: #f44336;
+            box-shadow: 0 0 10px #f44336;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
         .info-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin: 25px 0;
         }
         .info-box {
             background: rgba(255, 255, 255, 0.1);
-            padding: 15px;
-            border-radius: 8px;
+            padding: 20px;
+            border-radius: 12px;
             text-align: center;
+            transition: transform 0.3s;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .info-box:hover {
+            transform: translateY(-5px);
+            background: rgba(255, 255, 255, 0.15);
+        }
+        .info-box h4 {
+            margin-top: 0;
+            color: #ddd;
+            font-size: 1em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .info-box p {
+            font-size: 1.8em;
+            font-weight: bold;
+            margin: 10px 0 0 0;
         }
         .controls {
             display: flex;
-            gap: 10px;
+            gap: 12px;
             justify-content: center;
-            margin-top: 20px;
+            margin: 30px 0;
             flex-wrap: wrap;
         }
         button {
-            background: rgba(255, 255, 255, 0.2);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border: none;
             color: white;
-            padding: 10px 20px;
-            border-radius: 5px;
+            padding: 14px 28px;
+            border-radius: 10px;
             cursor: pointer;
-            transition: background 0.3s;
+            transition: all 0.3s;
+            font-size: 1em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
         }
         button:hover {
-            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
         }
-        .uptime {
-            font-size: 1.2em;
-            font-weight: bold;
-            text-align: center;
-            margin: 20px 0;
+        button:active {
+            transform: translateY(-1px);
+        }
+        .url-box {
+            background: rgba(0, 0, 0, 0.25);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 12px 0;
+            border-left: 4px solid #667eea;
         }
         code {
             background: rgba(0, 0, 0, 0.3);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: monospace;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
             display: block;
-            margin: 5px 0;
+            margin: 8px 0;
             overflow-x: auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
+            white-space: nowrap;
+            font-size: 0.9em;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
-        .url-box {
-            background: rgba(0, 0, 0, 0.2);
-            padding: 10px;
-            border-radius: 5px;
-            margin: 10px 0;
+        .copy-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8em;
+            margin-left: 10px;
+            transition: background 0.3s;
+        }
+        .copy-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        .emoji {
+            font-size: 1.5em;
+        }
+        .instructions {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9em;
+        }
+        .alert {
+            background: rgba(255, 193, 7, 0.15);
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .alert::before {
+            content: "⚠️";
+            font-size: 1.2em;
         }
     </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
     <div class="container">
-        <h1>🦊 Firefox Browser 24/7</h1>
+        <h1><i class="fas fa-firefox-browser"></i> Firefox Browser 24/7</h1>
         
         <div class="status-card">
             <h3>
                 <span class="status-indicator {{ 'online' if browser_running else 'offline' }}"></span>
-                Browser Status: {{ 'RUNNING' if browser_running else 'STOPPED' }}
+                Browser Status: <strong>{{ 'RUNNING' if browser_running else 'STOPPED' }}</strong>
             </h3>
             {% if browser_running %}
-                <p>✅ Firefox is running in headless mode</p>
-                <p>PID: {{ pid if pid else 'N/A' }}</p>
+                <p><i class="fas fa-check-circle"></i> Firefox is running in headless mode</p>
+                <p><i class="fas fa-microchip"></i> Process ID: {{ pid if pid else 'N/A' }}</p>
             {% else %}
-                <p>❌ Firefox is not running</p>
+                <p><i class="fas fa-times-circle"></i> Firefox is not running. Click "Start Browser" to begin.</p>
             {% endif %}
         </div>
         
         <div class="info-grid">
             <div class="info-box">
-                <h4>Uptime</h4>
+                <h4><i class="far fa-clock"></i> Uptime</h4>
                 <p>{{ uptime }}</p>
             </div>
             <div class="info-box">
-                <h4>Page Views</h4>
+                <h4><i class="far fa-eye"></i> Page Views</h4>
                 <p>{{ page_views }}</p>
             </div>
             <div class="info-box">
-                <h4>Memory Usage</h4>
+                <h4><i class="fas fa-memory"></i> Memory Usage</h4>
                 <p>{{ memory_usage }}</p>
+            </div>
+            <div class="info-box">
+                <h4><i class="fas fa-heartbeat"></i> Health</h4>
+                <p>{{ 'Healthy' if browser_running else 'Stopped' }}</p>
             </div>
         </div>
         
         <div class="controls">
             <button onclick="fetch('/start-browser').then(r => location.reload())">
-                ▶ Start Browser
+                <i class="fas fa-play"></i> Start Browser
             </button>
             <button onclick="fetch('/stop-browser').then(r => location.reload())">
-                ⏹ Stop Browser
+                <i class="fas fa-stop"></i> Stop Browser
             </button>
             <button onclick="fetch('/restart-browser').then(r => location.reload())">
-                🔄 Restart
+                <i class="fas fa-redo"></i> Restart
             </button>
             <button onclick="fetch('/visit-google').then(r => location.reload())">
-                🌐 Visit Google
+                <i class="fas fa-globe"></i> Visit Site
+            </button>
+            <button onclick="fetch('/simulate-activity').then(r => location.reload())">
+                <i class="fas fa-sync"></i> Simulate Activity
             </button>
         </div>
         
-        <div class="status-card">
-            <h3>📡 Uptime Robot Configuration</h3>
-            <p>Add this URL to Uptime Robot:</p>
+        <div class="alert">
+            <strong>Note:</strong> Free Render instances sleep after 15 minutes of inactivity. 
+            Use Uptime Robot to ping the health endpoint regularly.
+        </div>
+        
+        <div class="section-title">
+            <span class="emoji">📡</span>
+            <h3>Uptime Robot Configuration</h3>
+        </div>
+        <div class="instructions">
+            <p>To keep your Firefox instance running 24/7, configure Uptime Robot with these settings:</p>
             <div class="url-box">
+                <strong>Monitoring URL:</strong>
+                <code id="health-url">{{ base_url }}/health</code>
+                <button class="copy-btn" onclick="copyToClipboard('{{ base_url }}/health')">
+                    <i class="far fa-copy"></i> Copy
+                </button>
+            </div>
+            <p><strong>Recommended settings:</strong></p>
+            <ul>
+                <li>Monitor Type: HTTP(s)</li>
+                <li>Check Interval: 5 minutes</li>
+                <li>Alert Contacts: Add your email</li>
+            </ul>
+        </div>
+        
+        <div class="section-title">
+            <span class="emoji">🔧</span>
+            <h3>API Endpoints</h3>
+        </div>
+        <div class="info-grid">
+            <div class="url-box">
+                <strong>Health Check</strong>
                 <code>{{ base_url }}/health</code>
+                <button class="copy-btn" onclick="copyToClipboard('{{ base_url }}/health')">
+                    <i class="far fa-copy"></i> Copy
+                </button>
             </div>
-            <p>Set monitoring interval to 5 minutes</p>
+            <div class="url-box">
+                <strong>Simple Ping</strong>
+                <code>{{ base_url }}/ping</code>
+                <button class="copy-btn" onclick="copyToClipboard('{{ base_url }}/ping')">
+                    <i class="far fa-copy"></i> Copy
+                </button>
+            </div>
+            <div class="url-box">
+                <strong>Status Info</strong>
+                <code>{{ base_url }}/status</code>
+                <button class="copy-btn" onclick="copyToClipboard('{{ base_url }}/status')">
+                    <i class="far fa-copy"></i> Copy
+                </button>
+            </div>
         </div>
         
-        <div class="status-card">
-            <h3>🔄 Auto-Restart URLs</h3>
-            <p>Use these endpoints for automatic monitoring:</p>
-            <div class="url-box">
-                <code>{{ base_url }}/health</code> - Health check (returns JSON)
-            </div>
-            <div class="url-box">
-                <code>{{ base_url }}/ping</code> - Simple ping endpoint
-            </div>
-            <div class="url-box">
-                <code>{{ base_url }}</code> - Dashboard (this page)
+        <div class="section-title">
+            <span class="emoji">🚀</span>
+            <h3>Quick Actions</h3>
+        </div>
+        <div class="instructions">
+            <p>Use these direct links for quick actions:</p>
+            <div class="controls">
+                <a href="/start-browser" style="text-decoration: none;">
+                    <button><i class="fas fa-rocket"></i> Quick Start</button>
+                </a>
+                <a href="/status" style="text-decoration: none;" target="_blank">
+                    <button><i class="fas fa-info-circle"></i> JSON Status</button>
+                </a>
+                <a href="https://uptimerobot.com" style="text-decoration: none;" target="_blank">
+                    <button><i class="fas fa-external-link-alt"></i> Uptime Robot</button>
+                </a>
             </div>
         </div>
         
-        <div class="status-card">
-            <h3>⚙️ API Endpoints</h3>
-            <div class="url-box">
-                <code>{{ base_url }}/status</code> - Get browser status (JSON)
-            </div>
-            <div class="url-box">
-                <code>{{ base_url }}/simulate-activity</code> - Simulate browsing activity
-            </div>
+        <div class="footer">
+            <p><i class="fas fa-code"></i> Firefox 24/7 Service | Running on Render</p>
+            <p>Auto-refreshes every 30 seconds | Last refresh: <span id="current-time">{{ current_time }}</span></p>
         </div>
     </div>
     
     <script>
-        // Auto-refresh status every 30 seconds
+        // Update current time
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = 
+                now.toLocaleTimeString('en-US', { 
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+        }
+        updateTime();
+        setInterval(updateTime, 1000);
+        
+        // Auto-refresh page every 30 seconds
         setTimeout(() => location.reload(), 30000);
         
-        // Function to simulate browser activity
-        function simulateActivity() {
-            fetch('/simulate-activity');
-        }
-        // Simulate activity every 2 minutes
-        setInterval(simulateActivity, 120000);
-        
-        // Copy URL functionality
+        // Copy to clipboard function
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
-                alert('URL copied to clipboard!');
+                // Show temporary feedback
+                const originalText = event.target.innerHTML;
+                event.target.innerHTML = '<i class="fas fa-check"></i> Copied!';
+                event.target.style.background = '#4CAF50';
+                setTimeout(() => {
+                    event.target.innerHTML = originalText;
+                    event.target.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                alert('Failed to copy to clipboard. Please copy manually.');
             });
         }
         
-        // Add copy buttons to all code blocks
-        document.querySelectorAll('code').forEach(code => {
-            const button = document.createElement('button');
-            button.textContent = 'Copy';
-            button.style.cssText = 'margin-left: 10px; padding: 2px 8px; font-size: 0.8em;';
-            button.onclick = () => copyToClipboard(code.textContent);
-            code.parentNode.insertBefore(button, code.nextSibling);
+        // Simulate activity every 2 minutes
+        function simulateActivity() {
+            fetch('/simulate-activity')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Activity simulated:', data);
+                })
+                .catch(error => console.error('Error simulating activity:', error));
+        }
+        
+        // Start periodic activity simulation (every 2 minutes)
+        setInterval(simulateActivity, 120000);
+        
+        // Initial activity simulation
+        setTimeout(simulateActivity, 10000);
+        
+        // Add keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Ctrl+S to start browser
+            if (e.ctrlKey && e.key === 's') {
+                e.preventDefault();
+                fetch('/start-browser').then(r => location.reload());
+            }
+            // Ctrl+R to restart browser
+            if (e.ctrlKey && e.key === 'r') {
+                e.preventDefault();
+                fetch('/restart-browser').then(r => location.reload());
+            }
+            // Ctrl+D to simulate activity
+            if (e.ctrlKey && e.key === 'd') {
+                e.preventDefault();
+                fetch('/simulate-activity').then(r => location.reload());
+            }
         });
+        
+        // Show keyboard shortcuts help
+        console.log('Keyboard shortcuts:');
+        console.log('Ctrl+S - Start browser');
+        console.log('Ctrl+R - Restart browser');
+        console.log('Ctrl+D - Simulate activity');
     </script>
 </body>
 </html>
@@ -245,19 +443,12 @@ HTML_TEMPLATE = '''
 def get_memory_usage():
     """Get current memory usage"""
     try:
-        import psutil
-        process = psutil.Process(os.getpid())
-        mem_mb = round(process.memory_info().rss / 1024 / 1024, 2)
-        return f"{mem_mb} MB"
-    except ImportError:
-        try:
-            # Try using psutil if installed
-            import psutil
-            process = psutil.Process(os.getpid())
-            mem_mb = round(process.memory_info().rss / 1024 / 1024, 2)
-            return f"{mem_mb} MB"
-        except:
-            return "N/A"
+        # Simple memory usage calculation without psutil
+        import resource
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if hasattr(resource, 'getpagesize'):
+            usage = usage * resource.getpagesize() / 1024 / 1024
+        return f"{usage:.1f} MB"
     except:
         return "N/A"
 
@@ -275,7 +466,7 @@ def get_uptime():
     if days > 0:
         return f"{days}d {hours}h {minutes}m"
     elif hours > 0:
-        return f"{hours}h {minutes}m {seconds}s"
+        return f"{hours}h {minutes}m"
     else:
         return f"{minutes}m {seconds}s"
 
@@ -286,29 +477,15 @@ def start_firefox():
     try:
         logging.info("Starting Firefox in headless mode...")
         
-        # Check if Firefox is installed
-        try:
-            subprocess.run(['which', 'firefox'], check=True, capture_output=True)
-        except:
-            logging.warning("Firefox not found, attempting to install...")
-            try:
-                subprocess.run(['apt-get', 'update'], 
-                             stdout=subprocess.DEVNULL, 
-                             stderr=subprocess.DEVNULL)
-                subprocess.run(['apt-get', 'install', '-y', 'firefox-esr'],
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-            except:
-                logging.error("Failed to install Firefox")
-                return False
-        
-        # Start Firefox with optimized settings
+        # Command to start Firefox
         firefox_cmd = [
             'firefox',
             '--headless',
             '--no-sandbox',
             '--disable-gpu',
             '--disable-dev-shm-usage',
+            '--width=1920',
+            '--height=1080',
             '--remote-debugging-port=9222',
             'about:blank'
         ]
@@ -356,14 +533,6 @@ def monitor_browser():
                 start_firefox()
                 break
             
-            # Read output
-            try:
-                for line in iter(browser_process.stdout.readline, ''):
-                    if line:
-                        logging.debug(f"Firefox: {line.strip()}")
-            except:
-                pass
-            
             time.sleep(10)  # Check every 10 seconds
             
         except Exception as e:
@@ -374,7 +543,7 @@ def auto_simulate_activity():
     """Automatically simulate browser activity"""
     while browser_running:
         try:
-            time.sleep(300)  # Every 5 minutes
+            time.sleep(120)  # Every 2 minutes
             if browser_running:
                 simulate_browser_activity()
         except:
@@ -406,7 +575,6 @@ def simulate_browser_activity():
     global page_views
     
     try:
-        # Just increment page views for simulation
         page_views += 1
         logging.info(f"Simulated browser activity. Total views: {page_views}")
         return True
@@ -428,7 +596,8 @@ def index():
         page_views=page_views,
         memory_usage=get_memory_usage(),
         base_url=base_url,
-        pid=browser_process.pid if browser_process else None
+        pid=browser_process.pid if browser_process else None,
+        current_time=datetime.now().strftime('%H:%M:%S')
     )
 
 @app.route('/health')
@@ -440,13 +609,15 @@ def health():
             'browser': 'running',
             'uptime': get_uptime(),
             'page_views': page_views,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'service': 'Firefox 24/7'
         }), 200
     else:
         return jsonify({
             'status': 'degraded',
             'browser': 'stopped',
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'service': 'Firefox 24/7'
         }), 200
 
 @app.route('/ping')
@@ -507,7 +678,8 @@ def status():
         'page_views': page_views,
         'memory_usage': get_memory_usage(),
         'pid': browser_process.pid if browser_process else None,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'service': 'Firefox 24/7 on Render'
     })
 
 def cleanup(signum, frame):
@@ -525,9 +697,10 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logging.info(f"Starting Firefox 24/7 service on port {port}")
     
-    # Start Firefox in background thread
+    # Start Firefox in background thread after a delay
     def start_firefox_delayed():
-        time.sleep(3)  # Wait for Flask to start
+        time.sleep(5)  # Wait for Flask to start
+        logging.info("Attempting to start Firefox...")
         start_firefox()
     
     firefox_thread = threading.Thread(target=start_firefox_delayed, daemon=True)
