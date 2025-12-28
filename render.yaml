@@ -1,10 +1,13 @@
 services:
   - type: web
     name: real-firefox-browser
-    env: docker
-    dockerfilePath: ./Dockerfile
+    env: python
+    buildCommand: |
+      apt-get update && apt-get install -y firefox-esr xvfb x11-apps imagemagick
+      pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120
     envVars:
       - key: PORT
         value: 10000
-    plan: starter  # May need starter plan for VNC
+    plan: free
     autoDeploy: true
